@@ -1,3 +1,4 @@
+import { IOneWayBindingInstruction, ITwoWayBindingInstruction } from './../runtime/templating/instructions';
 import { DI, IContainer } from '../runtime/di';
 import {
   ITemplateSource,
@@ -7,14 +8,20 @@ import {
   TargetedInstructionType,
   ITargetedInstruction,
   IListenerBindingInstruction,
-  TargetedInstruction
+  TargetedInstruction,
+  ISetAttributeInstruction,
+  ISetPropertyInstruction
 } from '../runtime/templating/instructions';
 import * as CompilerUtils from './utilities';
 import { IAttributeType } from '../runtime/templating/component';
 import { DelegationStrategy } from '../runtime/binding/event-manager';
+import { IBindingLanguage, IAttrInfo } from './binding-language';
+import { IResourcesContainer } from './resources-container';
+import { BindingMode } from '../runtime/binding/binding-mode';
+import { Immutable } from '../runtime/interfaces';
 
 export interface IViewCompiler {
-  compile(template: string, resources: IContainer): ITemplateSource;
+  compile(template: string, resources: IResourcesContainer): ITemplateSource;
 }
 
 export const IViewCompiler = DI.createInterface<IViewCompiler>()
@@ -34,7 +41,16 @@ export const IViewCompiler = DI.createInterface<IViewCompiler>()
 // }
 
 class ViewCompiler implements IViewCompiler {
-  compile(template: string, resources: IContainer): ITemplateSource {
+
+  static inject = [IBindingLanguage];
+
+  constructor(
+    private bindingLanguage: IBindingLanguage
+  ) {
+
+  }
+
+  compile(template: string, resources: IResourcesContainer): ITemplateSource {
 
     const templateDef: TemplateDefinition = {
       name: 'Unknown',
@@ -71,11 +87,11 @@ class ViewCompiler implements IViewCompiler {
     throw new Error(`Invalid template: [${template}]`);
   }
 
-  private compileNode(source: ITemplateSource, node: Node, resources: IContainer): Node {
+  private compileNode(source: ITemplateSource, node: Node, resources: IResourcesContainer): Node {
     switch (node.nodeType) {
-      case CompilerUtils.NodeType.Element: //element node
+      case CompilerUtils.NodeType.Element:
         return this.compileElement(source, node as Element, resources);
-      case CompilerUtils.NodeType.Text: //text node
+      case CompilerUtils.NodeType.Text:
         //use wholeText to retrieve the textContent of all adjacent text nodes.
         // let expression = resources.getBindingLanguage(this.bindingLanguage).inspectTextContent(resources, node.wholeText);
         // if (expression) {
@@ -108,57 +124,99 @@ class ViewCompiler implements IViewCompiler {
     return node.nextSibling;
   }
 
-  private compileElement(source: ITemplateSource, node: Element, resources: IContainer): Node {
+  private compileElement(source: ITemplateSource, node: Element, resources: IResourcesContainer): Node {
     const tagName = node.tagName.toLowerCase();
     if (tagName === 'slot') {
-      throw new Error('<slot/> not implemented.');
+      throw new Error('<slot/> compilation not implemented.');
     }
     const targetInstructions: TargetedInstruction[] = [];
     // const isElement = CompilerUtils.isKnownElement(tagName, resources);
-    const isElement = false;
-    const vmClass = isElement ? resources.get(tagName) : undefined;
-    const definition: TemplateDefinition = isElement ? vmClass.definition : undefined;
-    const elementProperties: Record<string, IBindableInstruction> = isElement && definition.observables || Object.create(null);
+    const vmClass = resources.getElement(tagName);
+    const isElement = vmClass !== undefined;
+    const elDefinition: TemplateDefinition = isElement ? vmClass.definition : undefined;
+    const elementProps: Record<string, IBindableInstruction> = isElement && elDefinition.observables || Object.create(null);
 
     const attributes = node.attributes;
+    const bindingLanguage = this.bindingLanguage;
+
+    // let bindingLanguage: IBindingLanguage = resources.get(IBindingLanguage);
 
     for (let i = 0, ii = attributes.length; ii > i; ++i) {
       const attr = attributes[i];
       const attrName = attr.nodeName;
-      const isCustomAttribute = false && CompilerUtils.isKnownAttribute(
-        attrName,
-        resources
-      );
-      const attrVm: IAttributeType = isCustomAttribute ? resources.get(attrName) : undefined;
-      const attrComponent = isCustomAttribute ? attrVm.definition : undefined;
+      const attrValue = attr.value;
+      const attributeInfo = bindingLanguage.inspectAttribute(resources, tagName, attrName, attrValue);
+      const attrVm: IAttributeType = resources.getAttribute(attrName);
+      const isCustomAttribute = attrVm !== undefined;
+      // const attrComponent = isCustomAttribute ? attrVm.definition : undefined;
       if (isCustomAttribute) {
-        throw new Error('Custom attribute not implemented.');
+        throw new Error('Custom attribute compilation not implemented.');
       }
       if (isElement) {
-        const bindableInstruction = elementProperties[attrName];
+        const bindableInstruction = elementProps[attributeInfo.attrName];
         if (bindableInstruction) {
-          targetInstructions.push({
-            type: TargetedInstructionType.listenerBinding,
-            src: 'click',
-            dest: 'submit',
-            preventDefault: true,
-            strategy: DelegationStrategy.none
-          } as IListenerBindingInstruction);
+          targetInstructions.push(this.determineInstruction(attributeInfo, bindableInstruction));
         }
       } else if (isCustomAttribute) {
 
       } else {
-        targetInstructions.push({
-          type: TargetedInstructionType.setProperty,
-          value: attrName,
-          dest: attr.value
-        });
+        const isSetAttribute = /^data-|aria-|w+:/.test(attrName);
+        let instruction: TargetedInstruction;
+        if (isSetAttribute) {
+          instruction = {
+            type: TargetedInstructionType.setAttribute,
+            value: attributeInfo.attrValue,
+            dest: attributeInfo.attrName
+          } as ISetAttributeInstruction;
+        } else {
+          instruction = {
+            type: TargetedInstructionType.oneWayBinding,
+            dest: attributeInfo.attrName,
+            src: attributeInfo.attrValue,
+          } as IOneWayBindingInstruction;
+        }
+        targetInstructions.push(instruction);
       }
     }
     if (targetInstructions.length > 0) {
       source.instructions.push(targetInstructions);
     }
     return node.nextSibling;
+  }
+
+  private determineInstruction(
+    info: Immutable<IAttrInfo>,
+    bindableInstruction: IBindableInstruction
+  ): TargetedInstruction {
+    if (info.command === 'bind') {
+      switch (bindableInstruction.mode) {
+        case BindingMode.oneTime:
+          return {
+            type: TargetedInstructionType.setProperty,
+            value: info.attrValue,
+            dest: info.attrName
+          } as ISetPropertyInstruction;
+        case BindingMode.toView:
+        default:
+          return {
+            type: TargetedInstructionType.oneWayBinding,
+            src: info.attrValue,
+            dest: info.attrName
+          } as IOneWayBindingInstruction;
+        case BindingMode.twoWay:
+          return {
+            type: TargetedInstructionType.twoWayBinding,
+            src: info.attrValue,
+            dest: info.attrName
+          } as ITwoWayBindingInstruction;
+        case BindingMode.toView:
+          return {
+            type: TargetedInstructionType.oneWayBinding,
+            src: info.attrValue,
+            dest: info.attrName
+          } as IOneWayBindingInstruction;
+      }
+    }
   }
 }
 
