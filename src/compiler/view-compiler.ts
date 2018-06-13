@@ -222,14 +222,14 @@ class ViewCompiler implements IViewCompiler {
   }
 
   private determineElementBinding(
-    { attrName, attrValue }: Immutable<IAttrInfo>,
+    { attrName, attrValue, expression }: Immutable<IAttrInfo>,
   ): TargetedInstruction {
     const isSetAttribute = /^data-|aria-|w+:/.test(attrName);
     let instruction: TargetedInstruction;
     if (isSetAttribute) {
       instruction = {
         type: TargetedInstructionType.setAttribute,
-        value: attrValue,
+        value: attrValue, // what about data-id="Hello ${message}!"
         dest: attrName
       } as ISetAttributeInstruction;
     } else if (attrName === 'textcontent') {

@@ -70,6 +70,28 @@ describe.only('ViewCompiler', () => {
     expect(textContentBinding.src).to.eq('text');
   });
 
+  it('compiles attribute interpolation', () => {
+    template = html`
+      <template>
+        <div data-id="Hello \${message}!"></div>
+      </template>
+    `;
+    const templateSource = compiler.compile(template, resources);
+    expect(templateSource.instructions).to.be.instanceOf(Array, 'Template source should have instructions.');
+    const firstInstructionSet = templateSource.instructions[0];
+    expect(firstInstructionSet).to.be.instanceOf(Array, 'There should be at least one instruction set.');
+    expect(firstInstructionSet.length).to.eqls(1, 'There should be 1 binding instructions.');
+
+    const [
+      dataIdBinding
+    ] = firstInstructionSet as [
+      ISetAttributeInstruction
+    ];
+
+    expect(dataIdBinding.dest).to.eq('data-id');
+    expect(dataIdBinding.value).not.to.eq('Hello ${message}!');
+  });
+
   it('compiles text content', () => {
     template = html`
       <template>
@@ -77,7 +99,7 @@ describe.only('ViewCompiler', () => {
           Hello \${message}!
         </div>
       </template>
-    `
+    `;
     const templateSource = compiler.compile(template, resources);
     expect(templateSource.instructions).to.be.instanceOf(Array, 'Template source should have instructions.');
     const firstInstructionSet = templateSource.instructions[0];
