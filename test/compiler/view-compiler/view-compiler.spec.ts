@@ -36,12 +36,16 @@ describe.only('ViewCompiler', () => {
   it('compiles', () => {
     template = html`
       <template>
-        <div class.bind="cls" data-id.bind='id' textcontent.bind='text' aria-value.bind='value'></div>
+        <div id="d1" class.bind="cls" data-id.bind="id" textcontent.bind="text" aria-value.bind="value"></div>
       </template>
     `;
     const templateSource = compiler.compile(template, resources);
     expect(templateSource).not.to.be.undefined.and.not.to.be.null;
-    expect(templateSource.template).equals(template);
+    expect(templateSource.template).equals(html`
+      <template>
+        <div id="d1" class="au"></div>
+      </template>
+    `.trim());
     // expect(templateSource.surrogates).to.be.instanceOf(Array);
     expect(templateSource.instructions).to.be.instanceOf(Array, 'Template source should have instructions.');
     const firstInstructionSet = templateSource.instructions[0];
@@ -54,7 +58,7 @@ describe.only('ViewCompiler', () => {
       ariaValueBinding,
     ] = firstInstructionSet as [
       IOneWayBindingInstruction,
-      ISetAttributeInstruction,
+      IOneWayBindingInstruction,
       IOneWayBindingInstruction,
       ISetAttributeInstruction
     ];
@@ -62,11 +66,11 @@ describe.only('ViewCompiler', () => {
     expect(classBinding.src).to.eqls('cls', 'Class binding should get value from "src" property.');
     expect(classBinding.dest).to.eqls('class', 'Class binding should set value on "class" property of element.');
 
-    expect(dataIdBinding.type).to.eqls(TargetedInstructionType.setAttribute, 'data-* binding should have type of attribute.');
-    expect(dataIdBinding.value).to.eq('id', 'data-id.bind=id should have value "id"');
+    expect(dataIdBinding.type).to.eqls(TargetedInstructionType.oneWayBinding, '"bind" command binding should have type of oneway');
+    expect(dataIdBinding.src).to.eq('id', 'data-id.bind=id should have src value "id"');
     expect(dataIdBinding.dest).to.eq('data-id', 'data-id.bind=id should target "data-id"');
 
-    expect(textContentBinding.type).to.eq(TargetedInstructionType.textBinding, 'TextContent binding should have type of text binding');
+    expect(textContentBinding.type).to.eq(TargetedInstructionType.oneWayBinding, '"bind" command binding should have type of oneway');
     expect(textContentBinding.src).to.eq('text');
   });
 
@@ -85,14 +89,14 @@ describe.only('ViewCompiler', () => {
     const [
       dataIdBinding
     ] = firstInstructionSet as [
-      ISetAttributeInstruction
+      IOneWayBindingInstruction
     ];
 
     expect(dataIdBinding.dest).to.eq('data-id');
-    expect(dataIdBinding.value).not.to.eq('Hello ${message}!');
+    expect(dataIdBinding.src).to.eq('Hello ${message}!');
   });
 
-  it('compiles text content', () => {
+  it('compiles text content interpolation', () => {
     template = html`
       <template>
         <div>

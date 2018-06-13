@@ -80,10 +80,12 @@ class ViewCompiler implements IViewCompiler {
 
     this.compileNode(templateSource, rootNode, resources);
 
+    templateSource.template = templateRootEl.outerHTML;
+
     return templateSource;
   }
 
-  parse(template: string): HTMLElement {
+  private parse(template: string): HTMLElement {
     const parser = document.createElement('div');
     parser.innerHTML = template;
     const el = parser.firstElementChild;
@@ -99,7 +101,8 @@ class ViewCompiler implements IViewCompiler {
         return this.compileElement(source, node as Element, resources);
       case CompilerUtils.NodeType.Text:
         //use wholeText to retrieve the textContent of all adjacent text nodes.
-        const expression = this.parseInterpolation((node as Text).wholeText || '');
+        const wholeText = (node as Text).wholeText || '';
+        const expression = this.parseInterpolation(wholeText);
         if (expression) {
           const marker = document.createElement('au-marker');
           this.markAsInstructionTarget(marker);
@@ -109,15 +112,15 @@ class ViewCompiler implements IViewCompiler {
           }
           node.parentNode.insertBefore(marker, node);
           node.textContent = ' ';
-          //remove adjacent text nodes.
+          //remove adjacent text nodes
           while (node.nextSibling && node.nextSibling.nodeType === CompilerUtils.NodeType.Text) {
             node.parentNode.removeChild(node.nextSibling);
           }
           source.instructions.push([
-            { type: TargetedInstructionType.textBinding, src: expression.toString() } as ITextBindingInstruction
+            { type: TargetedInstructionType.textBinding, src: wholeText } as ITextBindingInstruction
           ]);
         } else {
-          //skip parsing adjacent text nodes.
+          //skip parsing adjacent text nodes
           while (node.nextSibling && node.nextSibling.nodeType === CompilerUtils.NodeType.Text) {
             node = node.nextSibling;
           }
@@ -140,6 +143,8 @@ class ViewCompiler implements IViewCompiler {
     const elementName = node.tagName.toLowerCase();
     if (elementName === 'slot') {
       throw new Error('<slot/> compilation not implemented.');
+    } else if (elementName === 'template') {
+      throw new Error('Nested <template/> compilation not implemented');
     }
     const targetInstructions: TargetedInstruction[] = [];
     // const isElement = CompilerUtils.isKnownElement(tagName, resources);
@@ -153,6 +158,8 @@ class ViewCompiler implements IViewCompiler {
 
     // let bindingLanguage: IBindingLanguage = resources.get(IBindingLanguage);
 
+    const toRemoveAttrs = [];
+
     for (let i = 0, ii = attributes.length; ii > i; ++i) {
       const attr = attributes[i];
       const attrName = attr.nodeName;
@@ -160,23 +167,31 @@ class ViewCompiler implements IViewCompiler {
       const attributeInfo = this.inspectAttribute(resources, elementName, attrName, attrValue);
       const attrVm: IAttributeType = resources.getAttribute(attrName);
       const isCustomAttribute = attrVm !== undefined;
-      // const attrComponent = isCustomAttribute ? attrVm.definition : undefined;
+      let targetInstruction: TargetedInstruction;
       if (isCustomAttribute) {
         throw new Error('Custom attribute compilation not implemented.');
       }
       if (isElement) {
         const bindableInstruction = elementProps[attributeInfo.attrName];
         if (bindableInstruction) {
-          targetInstructions.push(this.determineInstruction(attributeInfo, bindableInstruction));
+          targetInstruction = this.determineInstruction(attributeInfo, bindableInstruction);
         }
       } else if (isCustomAttribute) {
 
       } else {
-        targetInstructions.push(this.determineElementBinding(attributeInfo));
+        targetInstruction = this.determineElementBinding(node, attributeInfo);
+      }
+      if (targetInstruction !== undefined) {
+        targetInstructions.push(targetInstruction);
+        toRemoveAttrs.push(attrName);
       }
     }
     if (targetInstructions.length > 0) {
       source.instructions.push(targetInstructions);
+      this.markAsInstructionTarget(node);
+      for (let attr of toRemoveAttrs) {
+        node.removeAttribute(attr);
+      }
     }
 
     let currentChild = node.firstChild;
@@ -222,29 +237,62 @@ class ViewCompiler implements IViewCompiler {
   }
 
   private determineElementBinding(
-    { attrName, attrValue, expression }: Immutable<IAttrInfo>,
+    element: Element,
+    { attrName, attrValue, command, expression }: Immutable<IAttrInfo>,
   ): TargetedInstruction {
-    const isSetAttribute = /^data-|aria-|w+:/.test(attrName);
     let instruction: TargetedInstruction;
-    if (isSetAttribute) {
-      instruction = {
-        type: TargetedInstructionType.setAttribute,
-        value: attrValue, // what about data-id="Hello ${message}!"
-        dest: attrName
-      } as ISetAttributeInstruction;
-    } else if (attrName === 'textcontent') {
-      instruction = {
-        type: TargetedInstructionType.textBinding,
-        src: attrValue
-      } as ITextBindingInstruction;
-    } else {
+    if (expression) {
       instruction = {
         type: TargetedInstructionType.oneWayBinding,
-        dest: attrName,
         src: attrValue,
+        dest: attrName
       } as IOneWayBindingInstruction;
+    } else if (command) {
+      // TODO: handle dynamic - extensible command syntax
+      // instead of fixed list like following
+      if (command === 'trigger' || command === 'delegate' || command === 'capture') {
+        instruction = {
+          type: TargetedInstructionType.listenerBinding,
+          src: attrName,
+          dest: attrValue,
+          preventDefault: true,
+          strategy: command === 'trigger'
+            ? DelegationStrategy.none
+            : command === 'delegate'
+              ? DelegationStrategy.bubbling
+              : DelegationStrategy.capturing
+        } as IListenerBindingInstruction;
+      } else if (command === 'one-way') {
+
+      } else if (command === 'one-time') {
+
+      } else if (command === 'two-way') {
+
+      } else if (command === 'bind') {
+        instruction = {
+          type: this.determineElementBindingMode(element, element.tagName.toLowerCase(), attrName),
+          src: attrValue,
+          dest: attrName
+        } as TargetedInstruction;
+      }
     }
     return instruction;
+  }
+
+  private determineElementBindingMode(
+    element: Element & Partial<HTMLInputElement>,
+    tagName: string,
+    attrName: string
+  ): TargetedInstructionType {
+    if (tagName === 'input' && (attrName === 'value' || attrName === 'files') && element.type !== 'checkbox' && element.type !== 'radio'
+      || tagName === 'input' && attrName === 'checked' && (element.type === 'checkbox' || element.type === 'radio')
+      || (tagName === 'textarea' || tagName === 'select') && attrName === 'value'
+      || (attrName === 'textcontent' || attrName === 'innerhtml') && element.contentEditable === 'true'
+      || attrName === 'scrolltop'
+      || attrName === 'scrollleft') {
+      return TargetedInstructionType.twoWayBinding;
+    }
+    return TargetedInstructionType.oneWayBinding;
   }
 
   private inspectAttribute(resources: IResourcesContainer, elementName: string, attrName: string, attrValue: string): Immutable<IAttrInfo> {
@@ -257,11 +305,17 @@ class ViewCompiler implements IViewCompiler {
     }
 
     attrName = parts[0].trim();
-    sharedInspectionInfo.attrName = attrName;
-    sharedInspectionInfo.command = command;
-    sharedInspectionInfo.attrValue = attrValue;
-    sharedInspectionInfo.expression = expression;
-    return sharedInspectionInfo;
+    return {
+      attrName: attrName,
+      command: command,
+      attrValue: attrValue,
+      expression: expression,
+    };
+    // sharedInspectionInfo.attrName = attrName;
+    // sharedInspectionInfo.command = command;
+    // sharedInspectionInfo.attrValue = attrValue;
+    // sharedInspectionInfo.expression = expression;
+    // return sharedInspectionInfo;
   }
 
   private parseInterpolation(value: string): HtmlLiteral | null {
