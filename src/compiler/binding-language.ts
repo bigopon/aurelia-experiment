@@ -1,6 +1,6 @@
-import { IContainer, DI } from '../runtime/di';
+import { HtmlLiteral } from '../runtime/binding/ast';
 import { BindingMode } from '../runtime/binding/binding-mode';
-import { TargetedInstruction } from '../runtime/templating/instructions';
+import { DI } from '../runtime/di';
 import { Immutable } from '../runtime/interfaces';
 import { IResourcesContainer } from './resources-container';
 
@@ -28,7 +28,7 @@ export interface IAttrInfo {
    * When an attribute matches a certain number conditions
    * an expression can be extracted out before inspect any further
    */
-  expression?: TargetedInstruction;
+  expression?: HtmlLiteral;
 }
 
 export interface IBindingLanguage {

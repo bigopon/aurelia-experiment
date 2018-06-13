@@ -1,4 +1,4 @@
-import { IOneWayBindingInstruction, ITwoWayBindingInstruction } from './../runtime/templating/instructions';
+import { IOneWayBindingInstruction, ITwoWayBindingInstruction, ITextBindingInstruction } from './../runtime/templating/instructions';
 import { DI, IContainer } from '../runtime/di';
 import {
   ITemplateSource,
@@ -19,6 +19,8 @@ import { IBindingLanguage, IAttrInfo } from './binding-language';
 import { IResourcesContainer } from './resources-container';
 import { BindingMode } from '../runtime/binding/binding-mode';
 import { Immutable } from '../runtime/interfaces';
+import { PrimitiveLiteral, IExpression, HtmlLiteral } from '../runtime/binding/ast';
+import { IExpressionParser } from '../runtime/binding/expression-parser';
 
 export interface IViewCompiler {
   compile(template: string, resources: IResourcesContainer): ITemplateSource;
@@ -42,10 +44,14 @@ export const IViewCompiler = DI.createInterface<IViewCompiler>()
 
 class ViewCompiler implements IViewCompiler {
 
-  static inject = [IBindingLanguage];
+  static inject = [IBindingLanguage, IExpressionParser];
+
+
+  private emptyStringExpression = new PrimitiveLiteral('');
 
   constructor(
-    private bindingLanguage: IBindingLanguage
+    private bindingLanguage: IBindingLanguage,
+    private parser: IExpressionParser,
   ) {
 
   }
@@ -93,23 +99,29 @@ class ViewCompiler implements IViewCompiler {
         return this.compileElement(source, node as Element, resources);
       case CompilerUtils.NodeType.Text:
         //use wholeText to retrieve the textContent of all adjacent text nodes.
-        // let expression = resources.getBindingLanguage(this.bindingLanguage).inspectTextContent(resources, node.wholeText);
-        // if (expression) {
-        //   let marker = DOM.createElement('au-marker');
-        //   let auTargetID = makeIntoInstructionTarget(marker);
-        //   (node.parentNode || parentNode).insertBefore(marker, node);
-        //   node.textContent = ' ';
-        //   instructions[auTargetID] = TargetInstruction.contentExpression(expression);
-        //   //remove adjacent text nodes.
-        //   while (node.nextSibling && node.nextSibling.nodeType === 3) {
-        //     (node.parentNode || parentNode).removeChild(node.nextSibling);
-        //   }
-        // } else {
-        //   //skip parsing adjacent text nodes.
-        //   while (node.nextSibling && node.nextSibling.nodeType === 3) {
-        //     node = node.nextSibling;
-        //   }
-        // }
+        const expression = this.parseInterpolation((node as Text).wholeText || '');
+        if (expression) {
+          const marker = document.createElement('au-marker');
+          this.markAsInstructionTarget(marker);
+          // TODO: handle <template/>
+          if (!node.parentNode) {
+            throw new Error('Nested <template/> not implemented.');
+          }
+          node.parentNode.insertBefore(marker, node);
+          node.textContent = ' ';
+          //remove adjacent text nodes.
+          while (node.nextSibling && node.nextSibling.nodeType === CompilerUtils.NodeType.Text) {
+            node.parentNode.removeChild(node.nextSibling);
+          }
+          source.instructions.push([
+            { type: TargetedInstructionType.textBinding, src: expression.toString() } as ITextBindingInstruction
+          ]);
+        } else {
+          //skip parsing adjacent text nodes.
+          while (node.nextSibling && node.nextSibling.nodeType === CompilerUtils.NodeType.Text) {
+            node = node.nextSibling;
+          }
+        }
         return node.nextSibling;
       case CompilerUtils.NodeType.DocumentFragment:
         let currentChild = node.firstChild;
@@ -125,19 +137,19 @@ class ViewCompiler implements IViewCompiler {
   }
 
   private compileElement(source: ITemplateSource, node: Element, resources: IResourcesContainer): Node {
-    const tagName = node.tagName.toLowerCase();
-    if (tagName === 'slot') {
+    const elementName = node.tagName.toLowerCase();
+    if (elementName === 'slot') {
       throw new Error('<slot/> compilation not implemented.');
     }
     const targetInstructions: TargetedInstruction[] = [];
     // const isElement = CompilerUtils.isKnownElement(tagName, resources);
-    const vmClass = resources.getElement(tagName);
+    const vmClass = resources.getElement(elementName);
     const isElement = vmClass !== undefined;
     const elDefinition: TemplateDefinition = isElement ? vmClass.definition : undefined;
     const elementProps: Record<string, IBindableInstruction> = isElement && elDefinition.observables || Object.create(null);
 
     const attributes = node.attributes;
-    const bindingLanguage = this.bindingLanguage;
+    // const bindingLanguage = this.bindingLanguage;
 
     // let bindingLanguage: IBindingLanguage = resources.get(IBindingLanguage);
 
@@ -145,7 +157,7 @@ class ViewCompiler implements IViewCompiler {
       const attr = attributes[i];
       const attrName = attr.nodeName;
       const attrValue = attr.value;
-      const attributeInfo = bindingLanguage.inspectAttribute(resources, tagName, attrName, attrValue);
+      const attributeInfo = this.inspectAttribute(resources, elementName, attrName, attrValue);
       const attrVm: IAttributeType = resources.getAttribute(attrName);
       const isCustomAttribute = attrVm !== undefined;
       // const attrComponent = isCustomAttribute ? attrVm.definition : undefined;
@@ -160,26 +172,16 @@ class ViewCompiler implements IViewCompiler {
       } else if (isCustomAttribute) {
 
       } else {
-        const isSetAttribute = /^data-|aria-|w+:/.test(attrName);
-        let instruction: TargetedInstruction;
-        if (isSetAttribute) {
-          instruction = {
-            type: TargetedInstructionType.setAttribute,
-            value: attributeInfo.attrValue,
-            dest: attributeInfo.attrName
-          } as ISetAttributeInstruction;
-        } else {
-          instruction = {
-            type: TargetedInstructionType.oneWayBinding,
-            dest: attributeInfo.attrName,
-            src: attributeInfo.attrValue,
-          } as IOneWayBindingInstruction;
-        }
-        targetInstructions.push(instruction);
+        targetInstructions.push(this.determineElementBinding(attributeInfo));
       }
     }
     if (targetInstructions.length > 0) {
       source.instructions.push(targetInstructions);
+    }
+
+    let currentChild = node.firstChild;
+    while (currentChild) {
+      currentChild = this.compileNode(source, currentChild, resources);
     }
     return node.nextSibling;
   }
@@ -218,6 +220,135 @@ class ViewCompiler implements IViewCompiler {
       }
     }
   }
+
+  private determineElementBinding(
+    { attrName, attrValue }: Immutable<IAttrInfo>,
+  ): TargetedInstruction {
+    const isSetAttribute = /^data-|aria-|w+:/.test(attrName);
+    let instruction: TargetedInstruction;
+    if (isSetAttribute) {
+      instruction = {
+        type: TargetedInstructionType.setAttribute,
+        value: attrValue,
+        dest: attrName
+      } as ISetAttributeInstruction;
+    } else if (attrName === 'textcontent') {
+      instruction = {
+        type: TargetedInstructionType.textBinding,
+        src: attrValue
+      } as ITextBindingInstruction;
+    } else {
+      instruction = {
+        type: TargetedInstructionType.oneWayBinding,
+        dest: attrName,
+        src: attrValue,
+      } as IOneWayBindingInstruction;
+    }
+    return instruction;
+  }
+
+  private inspectAttribute(resources: IResourcesContainer, elementName: string, attrName: string, attrValue: string): Immutable<IAttrInfo> {
+    const parts = attrName.split('.');
+    const command = parts.length === 2 ? parts[1].trim() : '';
+    const expression = this.parseInterpolation(attrValue);
+
+    if (expression !== null && command !== '') {
+      throw new Error('Invalid attribute expression. Cannot support both binding command and interpolation expression.');
+    }
+
+    attrName = parts[0].trim();
+    sharedInspectionInfo.attrName = attrName;
+    sharedInspectionInfo.command = command;
+    sharedInspectionInfo.attrValue = attrValue;
+    sharedInspectionInfo.expression = expression;
+    return sharedInspectionInfo;
+  }
+
+  private parseInterpolation(value: string): HtmlLiteral | null {
+    let i = value.indexOf('${', 0);
+    let ii = value.length;
+    let char;
+    let pos = 0;
+    let open = 0;
+    let quote = null;
+    let interpolationStart;
+    let parts: IExpression[];
+    let partIndex = 0;
+
+    while (i >= 0 && i < ii - 2) {
+      open = 1;
+      interpolationStart = i;
+      i += 2;
+
+      do {
+        char = value[i];
+        i++;
+
+        if (char === "'" || char === '"') {
+          if (quote === null) {
+            quote = char;
+          } else if (quote === char) {
+            quote = null;
+          }
+          continue;
+        }
+
+        if (char === '\\') {
+          i++;
+          continue;
+        }
+
+        if (quote !== null) {
+          continue;
+        }
+
+        if (char === '{') {
+          open++;
+        } else if (char === '}') {
+          open--;
+        }
+      } while (open > 0 && i < ii);
+
+      if (open === 0) {
+        // lazy allocate array
+        parts = parts || [];
+        if (value[interpolationStart - 1] === '\\' && value[interpolationStart - 2] !== '\\') {
+          // escaped interpolation
+          parts[partIndex] = new PrimitiveLiteral(value.substring(pos, interpolationStart - 1) + value.substring(interpolationStart, i));
+          partIndex++;
+          parts[partIndex] = this.emptyStringExpression;
+          partIndex++;
+        } else {
+          // standard interpolation
+          parts[partIndex] = new PrimitiveLiteral(value.substring(pos, interpolationStart));
+          partIndex++;
+          parts[partIndex] = this.parser.parse(value.substring(interpolationStart + 2, i - 1));
+          partIndex++;
+        }
+        pos = i;
+        i = value.indexOf('${', i);
+      } else {
+        break;
+      }
+    }
+
+    // no interpolation.
+    if (partIndex === 0) {
+      return null;
+    }
+
+    // literal.
+    parts[partIndex] = new PrimitiveLiteral(value.substr(pos));
+    return new HtmlLiteral(parts);
+  }
+
+  private markAsInstructionTarget(element: Element) {
+    let cls = element.getAttribute('class');
+
+    element.setAttribute('class', (cls ? cls + ' au' : 'au'));
+  }
 }
+
+const sharedInspectionInfo: IAttrInfo = {};
 
 
