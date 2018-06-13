@@ -5,7 +5,8 @@ import { expect } from 'chai';
 import { html } from '../h';
 import { IContainer, DI } from '../../../src/runtime/di';
 import { IResourcesContainer } from '../../../src/compiler/resources-container';
-import { TargetedInstructionType, IOneWayBindingInstruction, ISetAttributeInstruction } from '../../../src/runtime/templating/instructions';
+import { TargetedInstructionType, IOneWayBindingInstruction, ISetAttributeInstruction, IListenerBindingInstruction } from '../../../src/runtime/templating/instructions';
+import { DelegationStrategy } from '../../../src/runtime/binding/event-manager';
 
 // export interface ITemplateSource {
 //   name?: string;
@@ -109,5 +110,36 @@ describe.only('ViewCompiler', () => {
     const firstInstructionSet = templateSource.instructions[0];
     expect(firstInstructionSet).to.be.instanceOf(Array, 'There should be at least one instruction set.');
     expect(firstInstructionSet.length).to.eqls(1, 'There should be 1 binding instructions.');
+  });
+
+  it('compiles event listeners', () => {
+    template = html`
+      <template>
+        <div click.delegate='hello()'></div>
+        <span click.trigger='spam()'></span>
+        <a click.capture='block()'></a>
+      </template>
+    `;
+    const templateSource = compiler.compile(template, resources);
+    expect(templateSource.instructions).to.be.instanceOf(Array, 'Template source should have instructions.');
+    expect(templateSource.instructions.length).to.eql(3, 'There should be 3 instruction set.');
+
+    const [
+      [delegateExpression],
+      [clickExpression],
+      [captureExpression]
+    ] = templateSource.instructions as IListenerBindingInstruction[][];
+
+    expect(delegateExpression.type === clickExpression.type
+      && delegateExpression.type === captureExpression.type
+      && delegateExpression.type === TargetedInstructionType.listenerBinding
+    ).to.eq(
+      true,
+      'Listener bindings should have type listener binding type'
+    );
+
+    expect(delegateExpression.strategy).to.eq(DelegationStrategy.bubbling, '.delegate should have listener strategy of "bubbling"');
+    expect(clickExpression.strategy).to.eq(DelegationStrategy.none, '.trigger should have listener strategy of "none"');
+    expect(captureExpression.strategy).to.eq(DelegationStrategy.capturing, '.capture should have listener strategy of "capturing"');
   });
 });
