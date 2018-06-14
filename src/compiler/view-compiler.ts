@@ -1,4 +1,4 @@
-import { IOneWayBindingInstruction, ITwoWayBindingInstruction, ITextBindingInstruction } from './../runtime/templating/instructions';
+import { IOneWayBindingInstruction, ITwoWayBindingInstruction, ITextBindingInstruction, IHydrateAttributeInstruction, IHydrateElementInstruction } from './../runtime/templating/instructions';
 import { DI, IContainer } from '../runtime/di';
 import {
   ITemplateSource,
@@ -140,7 +140,7 @@ class ViewCompiler implements IViewCompiler {
   }
 
   private compileElement(source: ITemplateSource, node: Element, resources: IResourcesContainer): Node {
-    const elementName = node.tagName.toLowerCase();
+    const elementName = (node.getAttribute('as-element') || node.tagName).toLowerCase();
     if (elementName === 'slot') {
       throw new Error('<slot/> compilation not implemented.');
     } else if (elementName === 'template') {
@@ -151,10 +151,32 @@ class ViewCompiler implements IViewCompiler {
     const vmClass = resources.getElement(elementName);
     const isElement = vmClass !== undefined;
     const elDefinition: TemplateDefinition = isElement ? vmClass.definition : undefined;
-    const elementProps: Record<string, IBindableInstruction> = isElement && elDefinition.observables || Object.create(null);
+    const elementProps: Record<string, IBindableInstruction> = isElement && (vmClass as any).observables || Object.create(null);
 
     const attributes = node.attributes;
-    // const bindingLanguage = this.bindingLanguage;
+
+    let elementInstruction: IHydrateElementInstruction;
+
+    if (isElement) {
+      targetInstructions.push(elementInstruction = {
+        type: TargetedInstructionType.hydrateElement,
+        res: elementName,
+        instructions: []
+      } as IHydrateElementInstruction);
+    }
+
+    // res: 'name-tag',
+    //   instructions: [
+    //     {
+    //       type: TargetedInstructionType.twoWayBinding,
+    //       src: 'message',
+    //       dest: 'name'
+    //     },
+    //     {
+    //       type: TargetedInstructionType.refBinding,
+    //       src: 'nameTag'
+    //     }
+    //   ]
 
     // let bindingLanguage: IBindingLanguage = resources.get(IBindingLanguage);
 
@@ -165,19 +187,19 @@ class ViewCompiler implements IViewCompiler {
       const attrName = attr.nodeName;
       const attrValue = attr.value;
       const attributeInfo = this.inspectAttribute(resources, elementName, attrName, attrValue);
-      const attrVm: IAttributeType = resources.getAttribute(attrName);
+      const attrVm: IAttributeType = resources.getAttribute(attributeInfo.attrName);
       const isCustomAttribute = attrVm !== undefined;
       let targetInstruction: TargetedInstruction;
-      if (isCustomAttribute) {
-        throw new Error('Custom attribute compilation not implemented.');
-      }
       if (isElement) {
         const bindableInstruction = elementProps[attributeInfo.attrName];
         if (bindableInstruction) {
-          targetInstruction = this.determineInstruction(attributeInfo, bindableInstruction);
+          elementInstruction.instructions.push(this.determineInstruction(attributeInfo, bindableInstruction));
         }
       } else if (isCustomAttribute) {
+        targetInstruction = {
+          type: TargetedInstructionType.hydrateAttribute,
 
+        } as IHydrateAttributeInstruction;
       } else {
         targetInstruction = this.determineElementBinding(node, attributeInfo);
       }
@@ -186,9 +208,11 @@ class ViewCompiler implements IViewCompiler {
         toRemoveAttrs.push(attrName);
       }
     }
-    if (targetInstructions.length > 0) {
-      source.instructions.push(targetInstructions);
+    if (isElement || targetInstructions.length > 0) {
       this.markAsInstructionTarget(node);
+
+      source.instructions.push(targetInstructions);
+
       for (let attr of toRemoveAttrs) {
         node.removeAttribute(attr);
       }

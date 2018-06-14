@@ -5,8 +5,14 @@ import { expect } from 'chai';
 import { html } from '../h';
 import { IContainer, DI } from '../../../src/runtime/di';
 import { IResourcesContainer } from '../../../src/compiler/resources-container';
-import { TargetedInstructionType, IOneWayBindingInstruction, ISetAttributeInstruction, IListenerBindingInstruction, ITwoWayBindingInstruction } from '../../../src/runtime/templating/instructions';
+import { TargetedInstructionType, IOneWayBindingInstruction, ISetAttributeInstruction, IListenerBindingInstruction, ITwoWayBindingInstruction, IHydrateAttributeInstruction, IHydrateElementInstruction } from '../../../src/runtime/templating/instructions';
 import { DelegationStrategy } from '../../../src/runtime/binding/event-manager';
+import { Repeat } from '../../../src/runtime/resources/repeat/repeat';
+import { IAttributeType, IElementType } from '../../../src/runtime/templating/component';
+import { If } from '../../../src/runtime/resources/if';
+import { Else } from '../../../src/runtime/resources/else';
+import { customElement, bindable } from '../../../src/runtime/decorators';
+import { BindingMode } from '../../../src/runtime/binding/binding-mode';
 
 // export interface ITemplateSource {
 //   name?: string;
@@ -192,17 +198,7 @@ describe('ViewCompiler', () => {
       [logPositionExpression],
       [horizontalPositionExpression],
       [feedbackExpression]
-    ] = templateSource.instructions as [
-      [ITwoWayBindingInstruction],
-      [ITwoWayBindingInstruction],
-      [ITwoWayBindingInstruction],
-      [ITwoWayBindingInstruction],
-      [ITwoWayBindingInstruction],
-      [ITwoWayBindingInstruction],
-      [ITwoWayBindingInstruction],
-      [ITwoWayBindingInstruction],
-      [ITwoWayBindingInstruction]
-    ];
+    ] = templateSource.instructions as ITwoWayBindingInstruction[][];
 
     expect(messageExpression.type === checkedExpression.type
       && messageExpression.type === darkThemeCheckedExpression.type
@@ -217,5 +213,70 @@ describe('ViewCompiler', () => {
       true,
       '"bind" command should create two way binding for input, checkbox and radio'
     );
+  });
+
+  describe('Custom Attribute', () => {
+
+    beforeEach(() => {
+      resources.registerAttribute(Repeat as any);
+      resources.registerAttribute(If as any);
+      resources.registerAttribute(Else as any);
+    });
+
+    it('compiles custom attribute', () => {
+      template = html`
+        <template>
+          <div if.bind="condition"></div>
+        </template>
+      `;
+
+      const templateSource = compiler.compile(template, resources);
+      expect(templateSource.instructions).to.be.instanceOf(Array, 'Template source should have instructions.');
+      expect(templateSource.instructions.length).to.eq(1, 'There should be 1 instruction set.');
+
+      const [
+        [ifExpression]
+      ] = templateSource.instructions as [
+        [IHydrateAttributeInstruction]
+      ];
+
+      expect(ifExpression.type === TargetedInstructionType.hydrateAttribute).to.eq(true, '"if" attribute should have type "hydrateAttribute"');
+    });
+  });
+
+  describe('Custom Element', () => {
+
+    it('compiles custom element', () => {
+
+      @customElement('app')
+      class App {
+
+        @bindable({
+          mode: BindingMode.twoWay
+        })
+        name: string;
+      }
+
+      resources.registerElement(App as any);
+
+      template = html`
+        <template>
+          <app name.bind="message"></app>
+        </template>
+      `;
+
+      const templateSource = compiler.compile(template, resources);
+      expect(templateSource.instructions).to.be.instanceOf(Array, 'Template source should have instructions.');
+      expect(templateSource.instructions.length).to.eq(1, 'There should be 1 instruction set.');
+
+      const [
+        [appInstructions]
+      ] = templateSource.instructions as [
+        [IHydrateElementInstruction]
+      ];
+
+      expect(appInstructions.instructions.length).to.eq(1, '"app" element should have 1 binding instruction');
+      expect(appInstructions.instructions[0].type).to.eq(TargetedInstructionType.twoWayBinding, '"name" binding mode should be "twoWay"');
+    });
   });
 });
