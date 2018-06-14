@@ -20,7 +20,7 @@ import { DelegationStrategy } from '../../../src/runtime/binding/event-manager';
 //   hasSlots?: boolean;
 // }
 
-describe.only('ViewCompiler', () => {
+describe('ViewCompiler', () => {
 
   let template: string;
 
