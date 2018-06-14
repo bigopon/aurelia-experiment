@@ -5,7 +5,7 @@ import { expect } from 'chai';
 import { html } from '../h';
 import { IContainer, DI } from '../../../src/runtime/di';
 import { IResourcesContainer } from '../../../src/compiler/resources-container';
-import { TargetedInstructionType, IOneWayBindingInstruction, ISetAttributeInstruction, IListenerBindingInstruction } from '../../../src/runtime/templating/instructions';
+import { TargetedInstructionType, IOneWayBindingInstruction, ISetAttributeInstruction, IListenerBindingInstruction, ITwoWayBindingInstruction } from '../../../src/runtime/templating/instructions';
 import { DelegationStrategy } from '../../../src/runtime/binding/event-manager';
 
 // export interface ITemplateSource {
@@ -47,11 +47,12 @@ describe('ViewCompiler', () => {
         <div id="d1" class="au"></div>
       </template>
     `.trim());
-    // expect(templateSource.surrogates).to.be.instanceOf(Array);
+
     expect(templateSource.instructions).to.be.instanceOf(Array, 'Template source should have instructions.');
     const firstInstructionSet = templateSource.instructions[0];
     expect(firstInstructionSet).to.be.instanceOf(Array, 'There should be at least one instruction set.');
     expect(firstInstructionSet.length).to.eqls(4, 'There should be 4 binding instructions.');
+
     const [
       classBinding,
       dataIdBinding,
@@ -63,6 +64,7 @@ describe('ViewCompiler', () => {
       IOneWayBindingInstruction,
       ISetAttributeInstruction
     ];
+
     expect(classBinding.type).to.eqls(TargetedInstructionType.oneWayBinding, 'Class binding should have type of one way binding');
     expect(classBinding.src).to.eqls('cls', 'Class binding should get value from "src" property.');
     expect(classBinding.dest).to.eqls('class', 'Class binding should set value on "class" property of element.');
@@ -141,5 +143,79 @@ describe('ViewCompiler', () => {
     expect(delegateExpression.strategy).to.eq(DelegationStrategy.bubbling, '.delegate should have listener strategy of "bubbling"');
     expect(clickExpression.strategy).to.eq(DelegationStrategy.none, '.trigger should have listener strategy of "none"');
     expect(captureExpression.strategy).to.eq(DelegationStrategy.capturing, '.capture should have listener strategy of "capturing"');
+  });
+
+  it('creates right binding mode', () => {
+    template = html`
+      <template>
+        <input value.bind='message'>
+        <input type="checkbox" checked.bind='checked'>
+        <fieldset>
+          <input type="radio" name="theme" value="dark" checked.bind="theme">
+          <input type="radio" name="theme" value="light" checked.bind="theme">
+        </fieldset>
+        <div contenteditable textcontent.bind="desc"></div>
+        <div contenteditable innerhtml.bind="error"></div>
+        <div scrolltop.bind="logPosition"></div>
+        <div scrollleft.bind="horizontalPosition"></div>
+        <textarea value.bind="feedback"></textarea>
+      </template>
+    `;
+
+    const templateSource = compiler.compile(template, resources);
+    expect(templateSource.instructions).to.be.instanceOf(Array, 'Template source should have instructions.');
+    expect(templateSource.instructions.length).to.eql(9, 'There should be 9 instruction sets.');
+
+    expect(templateSource.template).to.eq(html`
+      <template>
+        <input class="au">
+        <input type="checkbox" class="au">
+        <fieldset>
+          <input type="radio" name="theme" value="dark" class="au">
+          <input type="radio" name="theme" value="light" class="au">
+        </fieldset>
+        <div contenteditable="" class="au"></div>
+        <div contenteditable="" class="au"></div>
+        <div class="au"></div>
+        <div class="au"></div>
+        <textarea class="au"></textarea>
+      </template>
+    `.trim());
+
+    const [
+      [messageExpression],
+      [checkedExpression],
+      [darkThemeCheckedExpression],
+      [lightThemeCheckedExpression],
+      [descExpression],
+      [errorExpression],
+      [logPositionExpression],
+      [horizontalPositionExpression],
+      [feedbackExpression]
+    ] = templateSource.instructions as [
+      [ITwoWayBindingInstruction],
+      [ITwoWayBindingInstruction],
+      [ITwoWayBindingInstruction],
+      [ITwoWayBindingInstruction],
+      [ITwoWayBindingInstruction],
+      [ITwoWayBindingInstruction],
+      [ITwoWayBindingInstruction],
+      [ITwoWayBindingInstruction],
+      [ITwoWayBindingInstruction]
+    ];
+
+    expect(messageExpression.type === checkedExpression.type
+      && messageExpression.type === darkThemeCheckedExpression.type
+      && messageExpression.type === lightThemeCheckedExpression.type
+      && messageExpression.type === descExpression.type
+      && messageExpression.type === errorExpression.type
+      && messageExpression.type === logPositionExpression.type
+      && messageExpression.type === horizontalPositionExpression.type
+      && messageExpression.type === feedbackExpression.type
+      && messageExpression.type === TargetedInstructionType.twoWayBinding
+    ).to.eq(
+      true,
+      '"bind" command should create two way binding for input, checkbox and radio'
+    );
   });
 });
