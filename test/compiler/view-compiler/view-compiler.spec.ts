@@ -242,6 +242,45 @@ describe('ViewCompiler', () => {
 
       expect(ifExpression.type === TargetedInstructionType.hydrateAttribute).to.eq(true, '"if" attribute should have type "hydrateAttribute"');
     });
+
+    it('compiles custom attribute with options', () => {
+      // First 2 are for primary property
+      // second 2 are for expanded syntax
+      template = html`
+        <template>
+          <div square="red"></div>
+          <div square.bind="squareColor"></div>
+          <div square="color: red"></div>
+          <div square="color.bind: squareColor"></div>
+          <div square="color.bind: squareColor; size: 100"></div>
+          <div square="color.bind: squareColor; size.bind: squareSize"></div>
+        </template>
+      `;
+
+      const templateSource = compiler.compile(template, resources);
+      expect(templateSource.instructions).to.be.instanceOf(Array, 'Template source should have instructions.');
+      expect(templateSource.instructions.length).to.eq(1, 'There should be 1 instruction set.');
+
+      const [
+        [plainPrimaryExpession],
+        [plainPrimaryBindExpression],
+        [expandedExpression],
+        [expandedBindExpression],
+        [expandedMultipleExpression],
+        [expandedMultipleBindExpression]
+      ] = templateSource.instructions as [IHydrateAttributeInstruction][];
+
+      expect(
+        plainPrimaryExpession.type === plainPrimaryBindExpression.type
+        && plainPrimaryExpession.type === expandedExpression.type
+        && plainPrimaryExpession.type === expandedBindExpression.type
+        && plainPrimaryExpession.type === expandedMultipleExpression.type
+        && plainPrimaryExpession.type === expandedMultipleBindExpression.type
+        && plainPrimaryExpession.type === TargetedInstructionType.hydrateAttribute
+      ).to.eq(true, 'custom attribute bindings should have type attribute');
+
+      // ...
+    });
   });
 
   describe('Custom Element', () => {
@@ -275,8 +314,14 @@ describe('ViewCompiler', () => {
         [IHydrateElementInstruction]
       ];
 
-      expect(appInstructions.instructions.length).to.eq(1, '"app" element should have 1 binding instruction');
-      expect(appInstructions.instructions[0].type).to.eq(TargetedInstructionType.twoWayBinding, '"name" binding mode should be "twoWay"');
+      expect(appInstructions.instructions.length).to.eq(
+        1,
+        '"app" element should have 1 binding instruction'
+      );
+      expect(appInstructions.instructions[0].type).to.eq(
+        TargetedInstructionType.twoWayBinding,
+        '"name" binding mode should be "twoWay"'
+      );
     });
   });
 });

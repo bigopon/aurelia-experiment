@@ -201,13 +201,16 @@ class ViewCompiler implements IViewCompiler {
 
         } as IHydrateAttributeInstruction;
       } else {
-        targetInstruction = this.determineElementBinding(node, attributeInfo);
+        targetInstruction = this.determineCustomElementBinding(node, attributeInfo);
       }
       if (targetInstruction !== undefined) {
         targetInstructions.push(targetInstruction);
         toRemoveAttrs.push(attrName);
       }
     }
+    // cannot check for either alone, 
+    // element can consume all attribute bindings
+    // or there is no element at all
     if (isElement || targetInstructions.length > 0) {
       this.markAsInstructionTarget(node);
 
@@ -260,7 +263,7 @@ class ViewCompiler implements IViewCompiler {
     }
   }
 
-  private determineElementBinding(
+  private determineCustomElementBinding(
     element: Element,
     { attrName, attrValue, command, expression }: Immutable<IAttrInfo>,
   ): TargetedInstruction {
@@ -303,6 +306,93 @@ class ViewCompiler implements IViewCompiler {
     return instruction;
   }
 
+  private determineCustomAttributeBinding(
+    info: IAttrInfo
+  ) {
+    const attrInstruction: IHydrateAttributeInstruction = {
+      type: TargetedInstructionType.hydrateAttribute,
+      res: info.attrName,
+      instructions: []
+    };
+  }
+
+  private parseCustomAttributeExpression(
+    resources: IResourcesContainer,
+    info: IAttrInfo,
+    instruction: IHydrateAttributeInstruction
+  ) {
+    let attrValue = info.attrValue;
+    let name = null;
+    let target = '';
+    let current;
+    let i;
+    let ii;
+    let inString = false;
+    let inEscape = false;
+    let foundName = false;
+
+    for (i = 0, ii = attrValue.length; i < ii; ++i) {
+      current = attrValue[i];
+
+      if (current === ';' && !inString) {
+        if (!foundName) {
+          name = this.getPrimaryPropertyName(resources, instruction);
+        }
+        const partInfo = this.inspectAttribute(resources, '?', name, target.trim());
+        // language.createAttributeInstruction(resources, element, partInfo, instruction, context);
+
+        if (!instruction.attributes[partInfo.attrName]) {
+          instruction.attributes[partInfo.attrName] = partInfo.attrValue;
+        }
+
+        target = '';
+        name = null;
+      } else if (current === ':' && name === null) {
+        foundName = true;
+        name = target.trim();
+        target = '';
+      } else if (current === '\\') {
+        target += current;
+        inEscape = true;
+        continue;
+      } else {
+        target += current;
+
+        if (name !== null && inEscape === false && current === '\'') {
+          inString = !inString;
+        }
+      }
+
+      inEscape = false;
+    }
+
+    // check for the case where we have a single value with no name
+    // and there is a default property that we can use to obtain
+    // the name of the property with which the value should be associated.
+    if (!foundName) {
+      name = this.getPrimaryPropertyName(resources, context);
+    }
+
+    if (name !== null) {
+      partInfo = language.inspectAttribute(resources, '?', name, target.trim());
+      language.createAttributeInstruction(resources, element, partInfo, instruction, context);
+
+      if (!instruction.attributes[partInfo.attrName]) {
+        instruction.attributes[partInfo.attrName] = partInfo.attrValue;
+      }
+    }
+
+    return instruction;
+  }
+
+  private getPrimaryPropertyName(resources: IResourcesContainer, instruction: IHydrateAttributeInstruction): string | null {
+    let type = resources.getAttribute(instruction.res);
+    if (type && type.observables) {
+      return type.definition.primaryProperty.attribute;
+    }
+    return null;
+  }
+
   private determineElementBindingMode(
     element: Element & Partial<HTMLInputElement>,
     tagName: string,
@@ -313,7 +403,8 @@ class ViewCompiler implements IViewCompiler {
       || (tagName === 'textarea' || tagName === 'select') && attrName === 'value'
       || (attrName === 'textcontent' || attrName === 'innerhtml') && element.contentEditable === 'true'
       || attrName === 'scrolltop'
-      || attrName === 'scrollleft') {
+      || attrName === 'scrollleft'
+    ) {
       return TargetedInstructionType.twoWayBinding;
     }
     return TargetedInstructionType.oneWayBinding;
