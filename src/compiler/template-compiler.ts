@@ -1,10 +1,8 @@
-import { IOneWayBindingInstruction, ITwoWayBindingInstruction, ITextBindingInstruction, IHydrateAttributeInstruction, IHydrateElementInstruction } from './../runtime/templating/instructions';
-import { DI, IContainer } from '../runtime/di';
+import { IOneWayBindingInstruction, ITwoWayBindingInstruction, ITextBindingInstruction, IHydrateAttributeInstruction, IHydrateElementInstruction } from '../runtime/templating/instructions';
+// import { DI, IContainer } from '../runtime/di';
 import {
   ITemplateSource,
   TemplateDefinition,
-  IAttributeSource,
-  IBindableInstruction,
   TargetedInstructionType,
   ITargetedInstruction,
   IListenerBindingInstruction,
@@ -13,21 +11,17 @@ import {
   ISetPropertyInstruction
 } from '../runtime/templating/instructions';
 import * as CompilerUtils from './utilities';
-import { IAttributeType } from '../runtime/templating/component';
 import { DelegationStrategy } from '../runtime/binding/event-manager';
 import { IBindingLanguage, IAttrInfo } from './binding-language';
 import { IResourcesContainer } from './resources-container';
 import { BindingMode } from '../runtime/binding/binding-mode';
-import { Immutable } from '../runtime/interfaces';
 import { PrimitiveLiteral, IExpression, HtmlLiteral } from '../runtime/binding/ast';
 import { IExpressionParser } from '../runtime/binding/expression-parser';
-
-export interface IViewCompiler {
-  compile(template: string, resources: IResourcesContainer): ITemplateSource;
-}
-
-export const IViewCompiler = DI.createInterface<IViewCompiler>()
-  .withDefault(x => x.singleton(ViewCompiler));
+import { ITemplateCompiler } from '../runtime/templating/template-compiler';
+import { IResourceDescriptions } from '../runtime/resource';
+import { Immutable } from '../kernel/interfaces';
+import { ICustomElementType, CustomElementResource } from '../runtime/templating/custom-element';
+import { CustomAttributeResource } from '../runtime/templating/custom-attribute';
 
 
 // interface ITemplateSource {
@@ -42,12 +36,18 @@ export const IViewCompiler = DI.createInterface<IViewCompiler>()
 //   hasSlots?: boolean;
 // }
 
-class ViewCompiler implements IViewCompiler {
+type IWritable<T> = {
+  -readonly [K in keyof T]: IWritable<T[K]>
+}
+
+class TemplateCompiler implements ITemplateCompiler {
 
   static inject = [IBindingLanguage, IExpressionParser];
 
 
   private emptyStringExpression = new PrimitiveLiteral('');
+
+  name: string = 'default';
 
   constructor(
     private bindingLanguage: IBindingLanguage,
@@ -56,33 +56,41 @@ class ViewCompiler implements IViewCompiler {
 
   }
 
-  compile(template: string, resources: IResourcesContainer): ITemplateSource {
+  compile(definition: TemplateDefinition, resources: IResourceDescriptions): TemplateDefinition {
 
-    const templateDef: TemplateDefinition = {
+    // compile(template: string, resources: IResourcesContainer): TemplateDefinition {
+
+    const templateDef: Writable<TemplateDefinition> = {
       name: 'Unknown',
-      template: template,
+      build: {
+        required: false,
+        compiler: this.name
+      },
+      cache: -1,
+      template: definition.template,
       containerless: false,
       shadowOptions: { mode: 'open' },
       hasSlots: false,
-      observables: {},
+      bindables: {},
       dependencies: [],
       instructions: [],
       surrogates: [],
     };
 
-    const templateSource: ITemplateSource = {
-      template: template,
-      instructions: []
-    };
+    // const templateSource: ITemplateSource = {
+    //   template: template,
+    //   instructions: []
+    // };
 
-    const templateRootEl = this.parse(template);
+    const templateRootEl = this.parse(definition.template);
     const rootNode = 'content' in templateRootEl ? (templateRootEl as HTMLTemplateElement).content : templateRootEl;
 
-    this.compileNode(templateSource, rootNode, resources);
+    this.compileNode(templateDef, rootNode, resources);
 
-    templateSource.template = templateRootEl.outerHTML;
+    // Re-define template. This is the compiled template with very different structure
+    templateDef.template = templateRootEl.outerHTML;
 
-    return templateSource;
+    return templateDef;
   }
 
   private parse(template: string): HTMLElement {
@@ -95,7 +103,10 @@ class ViewCompiler implements IViewCompiler {
     throw new Error(`Invalid template: [${template}]`);
   }
 
-  private compileNode(source: ITemplateSource, node: Node, resources: IResourcesContainer): Node {
+  /**
+   * Compile a node and return next node for the next compilation
+   */
+  private compileNode(source: IWritable<TemplateDefinition>, node: Node, resources: IResourceDescriptions): Node {
     switch (node.nodeType) {
       case CompilerUtils.NodeType.Element:
         return this.compileElement(source, node as Element, resources);
@@ -139,7 +150,10 @@ class ViewCompiler implements IViewCompiler {
     return node.nextSibling;
   }
 
-  private compileElement(source: ITemplateSource, node: Element, resources: IResourcesContainer): Node {
+  /**
+   * Compile an element and then all of its children
+   */
+  private compileElement(source: IWritable<TemplateDefinition>, node: Element, resources: IResourceDescriptions): Node {
     const elementName = (node.getAttribute('as-element') || node.tagName).toLowerCase();
     if (elementName === 'slot') {
       throw new Error('<slot/> compilation not implemented.');
@@ -148,7 +162,7 @@ class ViewCompiler implements IViewCompiler {
     }
     const targetInstructions: TargetedInstruction[] = [];
     // const isElement = CompilerUtils.isKnownElement(tagName, resources);
-    const vmClass = resources.getElement(elementName);
+    const vmClass = resources.get(CustomElementResource, elementName);
     const isElement = vmClass !== undefined;
     const elDefinition: TemplateDefinition = isElement ? vmClass.definition : undefined;
     const elementProps: Record<string, IBindableInstruction> = isElement && (vmClass as any).observables || Object.create(null);
@@ -187,7 +201,7 @@ class ViewCompiler implements IViewCompiler {
       const attrName = attr.nodeName;
       const attrValue = attr.value;
       const attributeInfo = this.inspectAttribute(resources, elementName, attrName, attrValue);
-      const attrVm: IAttributeType = resources.getAttribute(attributeInfo.attrName);
+      const attrVm: AttributeDefinition = resources.get(CustomAttributeResource, attributeInfo.attrName);
       const isCustomAttribute = attrVm !== undefined;
       let targetInstruction: TargetedInstruction;
       if (isElement) {

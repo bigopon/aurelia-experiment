@@ -1,5 +1,5 @@
 // import { Aurelia } from '../../../src/runtime/aurelia';
-import { IViewCompiler } from '../../../src/compiler/view-compiler';
+import { IViewCompiler } from '../../../src/compiler/template-compiler';
 import { expect } from 'chai';
 // import { spy } from 'sinon';
 import { html } from '../h';
