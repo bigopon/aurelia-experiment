@@ -31,6 +31,8 @@ import {
   ViewCompileFlags,
 } from '@aurelia/runtime';
 import { Char } from '../binding/expression-parser';
+import { BindingCommandResource, IBindingCommandSource } from './binding-command';
+import { ILetBindingInstruction } from '@aurelia/runtime/src';
 
 const domParser = <HTMLDivElement>DOM.createElement('div');
 const marker = document.createElement('au-marker');
@@ -646,6 +648,15 @@ export class HydrateTemplateController implements IHydrateTemplateController {
     this.link = link;
   }
 }
+export class LetBindingInstruction implements ILetBindingInstruction {
+  public type: TargetedInstructionType.letBinding;
+  public srcOrExpr: string | IExpression;
+  public dest: string;
+  constructor(srcOrExpr: string | IExpression, dest: string) {
+    this.srcOrExpr = srcOrExpr;
+    this.dest = dest;
+  }
+}
 // tslint:enable:no-reserved-keywords
 
 // See ast.ts (at the bottom) for an explanation of what/why
@@ -679,6 +690,7 @@ SetAttributeInstruction.prototype.type = TargetedInstructionType.setAttribute;
 HydrateElementInstruction.prototype.type = TargetedInstructionType.hydrateElement;
 HydrateAttributeInstruction.prototype.type = TargetedInstructionType.hydrateAttribute;
 HydrateTemplateController.prototype.type = TargetedInstructionType.hydrateTemplateController;
+LetBindingInstruction.prototype.type = TargetedInstructionType.letBinding;
 
 // Note: the indices map to the last 4 bit positions of BindingType
 const BindingInstruction: any[] = [
