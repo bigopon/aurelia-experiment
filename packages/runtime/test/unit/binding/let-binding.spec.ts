@@ -22,7 +22,7 @@ describe('LetBinding', () => {
     dummyTarget = <any>{ foo: 'bar' };
     dummyTargetProperty = 'foo';
     dummyMode = BindingMode.twoWay;
-    sut = new LetBinding(dummySourceExpression, dummyTargetProperty, dummyMode, observerLocator, container);
+    sut = new LetBinding(dummySourceExpression, dummyTargetProperty, observerLocator, container);
   });
 
   describe('constructor', () => {
@@ -75,7 +75,7 @@ describe('LetBinding', () => {
       const sourceExpression = new MockExpression();
       sut = new LetBinding(<any>sourceExpression, 'foo', observerLocator, container, true);
       sut.$bind(BindingFlags.none, BindingContext.createScope(vm));
-      expect((sut.target as IScope).bindingContext).to.equal(vm, 'It should have used bindingContext to create target.');
+      expect(sut.target).to.equal(vm, 'It should have used bindingContext to create target.');
     });
 
     it('creates right target with toViewModel === false', () => {
@@ -84,7 +84,7 @@ describe('LetBinding', () => {
       const sourceExpression = new MockExpression();
       sut = new LetBinding(<any>sourceExpression, 'foo', observerLocator, container);
       sut.$bind(BindingFlags.none, BindingContext.createScope(vm, <any>view));
-      expect((sut.target as IScope).bindingContext).to.equal(view, 'It should have used overrideContext to create target.');
+      expect(sut.target).to.equal(view, 'It should have used overrideContext to create target.');
     });
   });
 
@@ -139,7 +139,9 @@ describe('LetBinding', () => {
     it(`connects the sourceExpression`, () => {
       const sourceExpression = new MockExpression();
       sut = new LetBinding(<any>sourceExpression, dummyTargetProperty, observerLocator, container);
+      const target = {};
       const scope: any = {};
+      sut['target'] = target;
       sut['$scope'] = scope;
       sut['$isBound'] = true;
       const flags = BindingFlags.none;
