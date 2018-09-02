@@ -416,7 +416,7 @@ describe('TemplateCompiler', () => {
 
   describe('compileElement()', () => {
 
-    it('throws on <let/> + <slot/>', () => {
+    it('throws on <slot/>', () => {
       const markup = '<template><slot></slot></template>';
       expect(() => {
         sut.compile(<any>{ templateOrNode: markup, instructions: [] }, resources);
@@ -445,6 +445,60 @@ describe('TemplateCompiler', () => {
             [],
             ViewCompileFlags.surrogate
           )).to.throw(/Invalid surrogate attribute/);
+        });
+      });
+
+      describe('<let/> element', () => {
+
+        it('does not generate instruction when there is no bindings', () => {
+          const { instructions } = compileWith(`<template><let></let></template>`);
+          verifyInstructions(instructions as any, []);
+        });
+
+        it('ignores custom element resource', () => {
+          @customElement('let')
+          class Let {}
+
+          const { instructions } = compileWith(
+            `<template><let></let></template>`,
+            [Let]
+          );
+          expect(instructions[0]).to.be.undefined;
+        });
+
+        it('throws on any command except bind', () => {
+          const commands = ['to-view', 'one-time', 'two-way', 'from-view', 'call', 'trigger'];
+          commands.forEach(cmd => {
+            expect(() => compileWith(`<let attr.${cmd}="a"></let>`)).to.throw(/only bind command supported/i);
+          });
+        });
+
+        it('compiles', () => {
+          const { instructions } = compileWith(`<let a.bind="b" c="\${d}"></let>`);
+          verifyInstructions(instructions[0] as any, [
+            { toVerify: ['type', 'dest', 'srcOrExp'],
+              type: TargetedInstructionType.letBinding, dest: 'a', srcOrExp: 'b' },
+            { toVerify: ['type', 'dest'],
+              type: TargetedInstructionType.letBinding, dest: 'c' }
+          ]);
+        });
+
+        describe('[to-view-model]', () => {
+          it('does not compile [to-view-model]', () => {
+            const { instructions } = compileWith(`<template><let to-view-model></let></template>`);
+            expect(instructions[0]).to.be.undefined;
+          });
+
+          it('ignores [to-view-model] order', () => {
+            let letInstructions = compileWith(`<template><let a.bind="a" to-view-model></let></template>`).instructions[0];
+            verifyInstructions(letInstructions as any, [
+              { toVerify: ['type', 'toViewModel'], type: TargetedInstructionType.letBinding, toViewModel: true }
+            ]);
+            letInstructions = compileWith(`<template><let to-view-model a.bind="a"></let></template>`).instructions[0];
+            verifyInstructions(letInstructions as any, [
+              { toVerify: ['type', 'toViewModel'], type: TargetedInstructionType.letBinding, toViewModel: true }
+            ]);
+          });
         });
       });
 
@@ -584,7 +638,7 @@ describe('TemplateCompiler', () => {
       [prop: string]: any;
     }
 
-    function compileWith(markup: string, extraResources: any[], viewCompileFlags?: ViewCompileFlags) {
+    function compileWith(markup: string, extraResources: any[] = [], viewCompileFlags?: ViewCompileFlags) {
       extraResources.forEach(e => e.register(container));
       return sut.compile(<any>{ templateOrNode: markup, instructions: [], surrogates: [] }, resources, viewCompileFlags);
     }
@@ -600,8 +654,8 @@ describe('TemplateCompiler', () => {
     }
 
     function verifyInstructionProp(actual: ITargetedInstruction, expected: IExpectedInstruction, prop: string) {
-      expect(
-        actual[prop]).to.equal(expected[prop],
+      expect(actual[prop]).to.equal(
+        expected[prop],
         `Expected actual instruction to have "${prop}": ${expected[prop]}. Received: ${actual[prop]}`
       );
     }

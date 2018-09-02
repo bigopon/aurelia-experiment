@@ -61,7 +61,8 @@ export type TargetedInstruction =
   ISetAttributeInstruction |
   IHydrateElementInstruction |
   IHydrateAttributeInstruction |
-  IHydrateTemplateController;
+  IHydrateTemplateController |
+  ILetBindingInstruction;
 
 export interface ITextBindingInstruction extends ITargetedInstruction {
   type: TargetedInstructionType.textBinding;
@@ -139,4 +140,5 @@ export interface ILetBindingInstruction extends ITargetedInstruction {
   type: TargetedInstructionType.letBinding;
   srcOrExpr: string | IExpression;
   dest: string;
+  toViewModel: boolean;
 }

@@ -12,6 +12,7 @@ import {
   IHydrateAttributeInstruction,
   IHydrateElementInstruction,
   IHydrateTemplateController,
+  ILetBindingInstruction,
   IListenerBindingInstruction,
   INode,
   IPropertyBindingInstruction,
@@ -23,6 +24,7 @@ import {
   ITemplateCompiler,
   ITemplateSource,
   ITextBindingInstruction,
+
   PrimitiveLiteral,
   TargetedInstruction,
   TargetedInstructionType,
@@ -42,7 +44,7 @@ const swapWithMarker = (node: Element, parentNode: Element) => {
   (node.parentNode || parentNode).replaceChild(marker, node);
   template.content.appendChild(node);
   return marker;
-}
+};
 
 const enum NodeType {
   Element = 1,
@@ -103,7 +105,7 @@ export class TemplateCompiler implements ITemplateCompiler {
     // incase node is the direct child of document fragment
     parentNode: Node
   ): Node {
-    let nextSibling = node.nextSibling;
+    const nextSibling = node.nextSibling;
     switch (node.nodeType) {
       case NodeType.Element:
         this.compileElementNode(<Element>node, instructions, resources, parentNode);
@@ -130,7 +132,7 @@ export class TemplateCompiler implements ITemplateCompiler {
     node: Element,
     surrogateInstructions: TargetedInstruction[],
     resources: IResourceDescriptions
-  ) {
+  ): void {
     const attributes = node.attributes;
     for (let i = 0, ii = attributes.length; i < ii; ++i) {
       const attr = attributes.item(i);
@@ -158,7 +160,6 @@ export class TemplateCompiler implements ITemplateCompiler {
               break;
             default:
               attrInst = new SetAttributeInstruction(value, name);
-              break;
           }
           surrogateInstructions.push(attrInst);
         } else {
@@ -180,9 +181,21 @@ export class TemplateCompiler implements ITemplateCompiler {
     let elementDefinition: Immutable<Required<ITemplateSource>>;
     let elementInstruction: HydrateElementInstruction;
     const tagName = node.tagName;
-    if (tagName === 'SLOT' || tagName === 'LET') {
-      throw new Error('<slot/> or <let/> not implemented');
+
+    if (tagName === 'SLOT') {
+      throw new Error('<slot/> not implemented.');
+    } else if (tagName === 'LET') {
+      const letInstructions = this.compileLetElement(node);
+      if (letInstructions.length > 0) {
+        instructions.push(letInstructions);
+        // theoretically there's no need to replace, but to keep it consistent
+        DOM.replaceNode(createMarker(), node);
+      } else {
+        node.remove();
+      }
+      return;
     }
+
     const tagResourceKey = tagName.toLowerCase();
     elementDefinition = resources.find(CustomElementResource, tagResourceKey);
     if (elementDefinition) {
@@ -241,6 +254,50 @@ export class TemplateCompiler implements ITemplateCompiler {
     while (currentChild) {
       currentChild = this.compileNode(currentChild, instructions, resources, parentNode);
     }
+  }
+
+  /**@internal */
+  public compileLetElement(node: Element): TargetedInstruction[] {
+    const letInstructions: TargetedInstruction[] = [];
+    const attributes = node.attributes;
+    // ToViewModel flag needs to be determined in advance
+    // before compiling any attribute
+    const toViewModel = node.hasAttribute('to-view-model');
+    node.removeAttribute('to-view-model');
+
+    for (let i = 0, ii = attributes.length; ii > i; ++i) {
+      const attr = attributes.item(i);
+      const { name, value } = attr;
+      // if the name has a period in it, targetName will be overwritten again with the left-hand side of the period
+      // and commandName will be the right-hand side
+      let targetName: string = name;
+      let commandName: string = null;
+      let letInstruction: LetBindingInstruction;
+
+      const nameLength = name.length;
+      let index = 0;
+      while (index < nameLength) {
+        if (name.charCodeAt(++index) === Char.Dot) {
+          targetName = PLATFORM.camelCase(name.slice(0, index));
+          commandName = name.slice(index + 1);
+          break;
+        }
+      }
+      if (!commandName) {
+        const expression = this.expressionParser.parse(value, BindingType.Interpolation);
+        if (expression === null) {
+          // Should just be a warning, but throw for now
+          throw new Error(`Invalid let binding. String liternal given for attribute: ${targetName}`);
+        }
+        letInstruction = new LetBindingInstruction(expression, targetName, toViewModel);
+      } else if (commandName !== 'bind') {
+        throw new Error('Only bind command supported for "let" element.');
+      } else {
+        letInstruction = new LetBindingInstruction(value, targetName, toViewModel);
+      }
+      letInstructions.push(letInstruction);
+    }
+    return letInstructions;
   }
 
   /*@internal*/
@@ -433,7 +490,7 @@ export class TemplateCompiler implements ITemplateCompiler {
     // instead of a bolted in check
     if (bindingCommand === BindingType.ForCommand) {
       // Yes, indeed we're not looking for an attribute named "repeat". Anything could be iterable. No idea what/how yet though, besides the repeater :)
-      let src: ITemplateSource = {
+      const src: ITemplateSource = {
         templateOrNode: node,
         instructions: []
       };
@@ -650,9 +707,11 @@ export class LetBindingInstruction implements ILetBindingInstruction {
   public type: TargetedInstructionType.letBinding;
   public srcOrExpr: string | IExpression;
   public dest: string;
-  constructor(srcOrExpr: string | IExpression, dest: string) {
+  public toViewModel: boolean;
+  constructor(srcOrExpr: string | IExpression, dest: string, toViewModel?: boolean) {
     this.srcOrExpr = srcOrExpr;
     this.dest = dest;
+    this.toViewModel = !!toViewModel;
   }
 }
 // tslint:enable:no-reserved-keywords

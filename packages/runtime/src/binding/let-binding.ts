@@ -58,10 +58,13 @@ export class LetBinding extends Binding {
     const $scope = this.$scope;
     const locator = this.locator;
     const target = this.target;
+    const targetProperty = this.targetProperty;
 
     if (flags & BindingFlags.updateTargetInstance) {
-      if (newValue !== sourceExpression.evaluate(flags, $scope, locator)) {
-        sourceExpression.assign(flags, target, locator, newValue);
+      const currValue = target[targetProperty];
+      const newValue = sourceExpression.evaluate(flags, $scope, locator);
+      if (newValue !== currValue) {
+        target[targetProperty] = newValue;
       }
       return;
     }
@@ -79,21 +82,20 @@ export class LetBinding extends Binding {
 
     this.$isBound = true;
     this.$scope = scope;
-    this.target = BindingContext.createScope(
-      this.toViewModel ? scope.bindingContext : scope.overrideContext,
-      scope.overrideContext
-    );
+    this.target = this.toViewModel ? scope.bindingContext : scope.overrideContext;
 
     const sourceExpression = this.sourceExpression;
     if (sourceExpression.bind) {
       sourceExpression.bind(flags, scope, this);
     }
+    // sourceExpression might have been changed during bind
+    this.target[this.targetProperty] = this.sourceExpression.evaluate(BindingFlags.fromBind, scope, this.locator);
 
     const mode = this.mode;
     if ((mode & toView) !== toView) {
       throw new Error('Let binding only supports [toView] binding mode.');
     }
-    sourceExpression.connect(flags, scope, this);
+    this.sourceExpression.connect(flags, scope, this);
   }
 
   public $unbind(flags: BindingFlags): void {
@@ -121,7 +123,7 @@ export class LetBinding extends Binding {
     const value = sourceExpression.evaluate(flags, $scope, this.locator);
     // Let binding should initialize on their own
     // not waiting to be intied
-    sourceExpression.assign(BindingFlags.none, $scope, this.locator, value);
+    this.target[this.targetProperty] = value;
 
     sourceExpression.connect(flags, $scope, this);
   }

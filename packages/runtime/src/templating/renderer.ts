@@ -186,12 +186,14 @@ export class Renderer implements IRenderer {
   }
 
   public [TargetedInstructionType.letBinding](renderable: IRenderable, target: any, instruction: Immutable<ILetBindingInstruction>) {
+    target.remove();
     const srcOrExpr = instruction.srcOrExpr as any;
     renderable.$bindables.push(new LetBinding(
       srcOrExpr.$kind ? srcOrExpr : this.parser.parse(srcOrExpr, BindingType.IsPropertyCommand),
       instruction.dest,
       this.observerLocator,
-      this.context
+      this.context,
+      instruction.toViewModel
     ));
   }
 }
